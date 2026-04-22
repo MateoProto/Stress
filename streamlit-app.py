@@ -7,7 +7,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
- 
+
 # ── Colores ───────────────────────────────────────────────
 BG         = "#0d1117"
 PIPE_COL   = "#58a6ff"
@@ -21,11 +21,32 @@ PANEL2     = "#1c2128"
 BORDER     = "#30363d"
 GRAV_COL   = "#fbbf24"
 TEXT       = "#e6edf3"
- 
+
+# ── Conversiones SI ↔ Inglés ──────────────────────────────────────
+IN_PER_M     = 39.3701
+MM_PER_IN    = 25.4
+PSI_PER_MPA  = 145.038
+KG_M3_PER_LB_IN3 = 27679.9
+GPA_PER_MPSI = 6.89476
+
+def c_to_f(c):       return c * 9/5 + 32
+def m_to_in(m):      return m * IN_PER_M
+def in_to_mm(i):     return i * MM_PER_IN
+def in_to_m(i):      return i * 0.0254
+def mpa_to_psi(mpa): return mpa * PSI_PER_MPA
+def psi_to_mpa(psi): return psi / PSI_PER_MPA
+
+# ── Diámetros Nominales (DN) ↔ NPS ───────────────────────────────
+DN_TO_NPS = {
+    "DN 50":  "2",  "DN 80":  "3",  "DN 100": "4",
+    "DN 150": "6",  "DN 200": "8",  "DN 250": "10",
+    "DN 300": "12", "DN 400": "16",
+}
+DN_SIZES = list(DN_TO_NPS.keys())  # for reference
+
 # ── Datos constantes ─────────────────────────────────────
-PIPE_SIZES = ["2","3","4","6","8","10","12","16"]
 SCHEDULES  = ["10","20","40","80","160"]
- 
+
 CONFIGS = [
     "Voladizo (1 apoyo empotrado)",
     "Simplemente apoyado (2 apoyos)",
@@ -33,14 +54,15 @@ CONFIGS = [
     "Forma U (lazo de expansión)",
     "Forma Z (offset)",
 ]
- 
+
 ORIENTATIONS = [
     "Horizontal  — caños en X, gravedad ↓ (-Y)",
     "Vertical    — caños en Y, gravedad ↓ (-Y)",
     "En planta   — caños en XY, gravedad ↓ (-Z, ⊗ fuera del plano)",
 ]
- 
+
 # Material: (nombre display, id CSV, descripción)
+# (nombre, id, rho_lb_in3, nu, alp_per_F, E_psi, sh_psi)
 PRESET_MATERIALS = [
     ("A53A  — Acero al carbono (ASTM A53 Gr.A)",  "A53A",  0.2830, 0.3, 6.07e-6, 27.9e6, 12000),
     ("A106B — Acero al carbono (ASTM A106 Gr.B)", "A106B", 0.2830, 0.3, 6.07e-6, 27.9e6, 17100),
@@ -49,7 +71,7 @@ PRESET_MATERIALS = [
     ("✏️  Material personalizado",                "CUSTOM", 0.2830, 0.3, 6.07e-6, 27.9e6, 15000),
 ]
 MAT_NAMES = [m[0] for m in PRESET_MATERIALS]
- 
+
 # ── CSV de materiales con tablas desde -325°F ────────────
 # (extender desde bajas temperaturas evita errores de límite en PSI)
 MATERIALS_CSV = '''\
@@ -59,7 +81,7 @@ A106B,B31.1,0.2830,0.3,"-325,-200,-100,-50,70,200,300,400,500,600,700,800,900,10
 SS304,B31.1,0.2900,0.3,"-325,-200,-100,-50,70,200,300,400,500,600,700,800,900,1000","0.0000088,0.0000091,0.0000093,0.0000095,0.0000096,0.0000099,0.0000101,0.0000103,0.0000105,0.0000107,0.0000109,0.0000111,0.0000113,0.0000115","28300000,28300000,28100000,28000000,28000000,27700000,27300000,26900000,26200000,25500000,24800000,23900000,22900000,21600000","20000,20000,20000,20000,20000,18800,17600,17100,17000,16200,15200,14200,12100,9000"
 SS316,B31.1,0.2900,0.3,"-325,-200,-100,-50,70,200,300,400,500,600,700,800,900,1000","0.0000088,0.0000091,0.0000093,0.0000095,0.0000096,0.0000099,0.0000101,0.0000103,0.0000105,0.0000107,0.0000109,0.0000111,0.0000113,0.0000115","28300000,28300000,28100000,28000000,28000000,27700000,27300000,26900000,26200000,25500000,24800000,23900000,22900000,21600000","20000,20000,20000,20000,20000,20000,18400,17500,17100,16700,16200,14200,11200,9000"
 '''
- 
+
 def build_materials_csv(custom=None):
     """
     Escribe el CSV de materiales en /tmp e incluye el material
@@ -85,7 +107,7 @@ def build_materials_csv(custom=None):
     with open(path, "w") as f:
         f.write(csv)
     return path
- 
+
 # ── PSI Header ───────────────────────────────────────────
 PSI_HEADER = """\
 import inspect, psi.loads as _pl
@@ -93,10 +115,10 @@ _s = inspect.getsource(_pl)
 _sf = _s.replace('wxl, wyl, wzl = wl\\n', 'wxl, wyl, wzl = wl[:, 0]\\n')
 exec(compile(_sf, _pl.__file__ or '<psi.loads>', 'exec'), _pl.__dict__)
 from psi.loads import Weight, Thermal
- 
+
 import psi
 psi.MATERIAL_DATA_FILE = '{csv_path}'
- 
+
 from psi.app import App; app = App()
 from psi.model import Model
 from psi.elements import Run
@@ -108,22 +130,22 @@ from psi.reports import Movements
 from psi.codes.b311 import B31167
 from psi.supports import Anchor
 from psi.point import Point
- 
+
 mdl = Model('sim')
 {vertical_line}
 pipe1 = Pipe.from_file('pipe1', '{size}', '{sched}')
 mat1 = Material.from_file('mat1', '{mat_id}', 'B31.1')
 """
- 
+
 # ══════════════════════════════════════════════════════════
 # GEOMETRÍA
 # ══════════════════════════════════════════════════════════
- 
+
 def build_geometry(config, L1, L2, L3, orientation):
     is_vertical = "Vertical" in orientation
     return _geom_vertical(config, L1, L2, L3) if is_vertical \
         else _geom_horizontal(config, L1, L2, L3)
- 
+
 def _geom_horizontal(config, L1, L2, L3):
     if config == "Voladizo (1 apoyo empotrado)":
         g = f"pt10=Point(10)\nrun20=Run(20,{L1})\nanc1=Anchor('A1',10)\nanc1.apply([run20])"
@@ -149,7 +171,7 @@ def _geom_horizontal(config, L1, L2, L3):
              f"anc2=Anchor('A2',40)\nanc2.apply([run40])")
         return g, {10:(0,0),20:(L1,0),30:(L1,-L2),40:(L1+L3,-L2)}, ["run20","run30","run40"], [10,40]
     raise ValueError(f"Config: {config}")
- 
+
 def _geom_vertical(config, L1, L2, L3):
     if config == "Voladizo (1 apoyo empotrado)":
         g = f"pt10=Point(10)\nrun20=Run(20,0,{L1},0)\nanc1=Anchor('A1',10)\nanc1.apply([run20])"
@@ -175,33 +197,33 @@ def _geom_vertical(config, L1, L2, L3):
              f"anc2=Anchor('A2',40)\nanc2.apply([run40])")
         return g, {10:(0,0),20:(0,L1),30:(L2,L1),40:(L2,L1+L3)}, ["run20","run30","run40"], [10,40]
     raise ValueError(f"Config: {config}")
- 
+
 # ══════════════════════════════════════════════════════════
 # SCRIPT PSI
 # ══════════════════════════════════════════════════════════
- 
+
 def build_psi_script(cfg):
     is_planta   = "planta"   in cfg["orientation"]
     is_vertical = "Vertical" in cfg["orientation"]
     vertical_line = "mdl.settings.vertical='z'" if is_planta else ""
- 
+
     # CSV de materiales
     custom = cfg.get("custom_mat")
     csv_path = build_materials_csv(custom)
- 
+
     header = PSI_HEADER.format(
         csv_path=csv_path,
         size=cfg["size"], sched=cfg["sched"],
         mat_id=cfg["mat_id"],
         vertical_line=vertical_line)
- 
+
     geom, nodes, elems, anchors = build_geometry(
         cfg["config"], cfg["L1_in"], cfg["L2_in"], cfg["L3_in"], cfg["orientation"])
- 
+
     es = ", ".join(elems)
     loads = lcs = ""
     lc_names = []
- 
+
     if cfg["use_weight"] or cfg["use_pressure"]:
         sus_types = []
         if cfg["use_weight"]:
@@ -216,7 +238,7 @@ def build_psi_script(cfg):
         loads += f"t1=Thermal('T1',1,{cfg['T_op']},{cfg['T_ins']})\nt1.apply([{es}])\n"
         lcs   += f"lc_t=LoadCase('l2','exp',[Thermal],[1])\n"
         lc_names.append("lc_t")
- 
+
     stress_block = """
 from psi.units import Units as _Units
 _ndof = 6
@@ -242,18 +264,18 @@ for _lc in [{lc_names_str}]:
                 print(f"STRESS|{{_lc.name}}|{{_lc.stype}}|{{_pt.name}}|{{_sl:.2f}}|{{_sa:.2f}}|{{_rat:.4f}}|{{_slp:.2f}}|{{_slb:.2f}}|{{_shoop:.2f}}")
 print("=== END_STRESS_DATA ===")
 """.format(lc_names_str=", ".join(lc_names))
- 
+
     footer = (f"b311=B31167('B31.1')\nb311.apply([{es}])\n"
               f"mdl.analyze()\n"
               f"disp=Movements('r1',[{','.join(lc_names)}])\ndisp.to_screen()\n")
     footer += stress_block
- 
+
     return header + geom + "\n" + loads + lcs + footer, nodes, anchors
- 
+
 # ══════════════════════════════════════════════════════════
 # EJECUCIÓN PSI
 # ══════════════════════════════════════════════════════════
- 
+
 def run_psi(script):
     with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, dir='/tmp') as f:
         f.write(script); fname = f.name
@@ -263,7 +285,7 @@ def run_psi(script):
         return r.stdout, r.stderr, r.returncode
     finally:
         os.unlink(fname)
- 
+
 def parse_movements(stdout, use_weight, use_thermal):
     results = {}
     lines   = stdout.splitlines()
@@ -296,18 +318,19 @@ def parse_movements(stdout, use_weight, use_thermal):
                 results.setdefault(int(m.group(1)),{})[key0] = (
                     float(m.group(2)),float(m.group(3)),float(m.group(4)))
     return results
- 
+
 # ══════════════════════════════════════════════════════════
 # VISUALIZACIÓN
 # ══════════════════════════════════════════════════════════
- 
+
 def _disp_xy(node, key, movements, orientation):
+    """Returns displacement in METERS for plotting."""
     is_planta = "planta" in orientation
     if node not in movements or key not in movements[node]: return 0,0
     dx,dy,dz = movements[node][key]
     if is_planta and key=="Peso": return 0,0
-    return dx/12, dy/12
- 
+    return in_to_m(dx), in_to_m(dy)
+
 def parse_stresses(stdout):
     """
     Parsea tensiones del bloque PSI_STRESS_DATA.
@@ -331,23 +354,23 @@ def parse_stresses(stdout):
         if key not in rows or float(sl) > rows[key]["sl"]:
             rows[key] = row
     return list(rows.values())
- 
- 
+
+
 def make_stress_figure(stress_rows, nodes):
     """Bar chart showing S/Sallow ratio per node, colored by severity."""
     if not stress_rows: return None
- 
+
     # Group by stype
     sus_rows = [r for r in stress_rows if r["stype"] == "sus"]
     exp_rows = [r for r in stress_rows if r["stype"] == "exp"]
- 
+
     n_plots = (1 if sus_rows else 0) + (1 if exp_rows else 0)
     if n_plots == 0: return None
- 
+
     fig, axes = plt.subplots(1, n_plots, figsize=(6*n_plots, max(3, len(nodes)*0.6+1.5)))
     if n_plots == 1: axes = [axes]
     fig.patch.set_facecolor(BG)
- 
+
     for ax, rows, title in zip(axes,
                                 [r for r in [sus_rows, exp_rows] if r],
                                 ["Carga sostenida (Peso + Presión)",
@@ -357,37 +380,37 @@ def make_stress_figure(stress_rows, nodes):
         ratios      = [r["ratio"] for r in rows_s]
         sl_vals     = [r["sl"]    for r in rows_s]
         sa_vals     = [r["sallow"] for r in rows_s]
- 
+
         # Color by ratio
         colors = []
         for ratio in ratios:
             if ratio < 0.5:   colors.append("#3fb950")   # green  — OK
             elif ratio < 0.8: colors.append("#fbbf24")   # yellow — precaución
             else:             colors.append("#ff7b72")   # red    — crítico
- 
+
         y_pos = range(len(rows_s))
         bars = ax.barh(list(y_pos), ratios, color=colors,
                        height=0.55, zorder=3, edgecolor=BG, linewidth=0.5)
- 
+
         # Limit line at 1.0
         ax.axvline(1.0, color="#ff7b72", linewidth=1.5, linestyle="--",
                    alpha=0.7, zorder=4, label="Límite (S/Sa = 1.0)")
         # Limit line at 0.8
         ax.axvline(0.8, color="#fbbf24", linewidth=1, linestyle=":",
                    alpha=0.6, zorder=4)
- 
+
         # Labels on bars
         for i, (bar, r, sl, sa) in enumerate(zip(bars, ratios, sl_vals, sa_vals)):
             ax.text(min(r + 0.02, 1.05), i,
-                    f"  {r*100:.1f}%  ({sl:.0f}/{sa:.0f} psi)",
+                    f"  {r*100:.1f}%  ({psi_to_mpa(sl):.1f}/{psi_to_mpa(sa):.1f} MPa)",
                     va='center', color=NODE_COL, fontsize=8,
                     fontfamily='monospace')
- 
+
         ax.set_yticks(list(y_pos))
         ax.set_yticklabels(node_labels, color=TEXT if "TEXT" in dir() else NODE_COL,
                            fontsize=9, fontfamily='monospace')
         ax.set_xlim(0, max(max(ratios)*1.35 + 0.1, 1.15))
-        ax.set_xlabel("S / Sallow  (utilización)", color=SUBTEXT,
+        ax.set_xlabel("S / Sallow  (utilización)",  color=SUBTEXT,
                       fontsize=9, fontfamily='monospace')
         ax.set_title(title, color=NODE_COL, fontsize=10,
                      fontfamily='monospace', pad=8)
@@ -398,11 +421,11 @@ def make_stress_figure(stress_rows, nodes):
         ax.set_axisbelow(True)
         ax.legend(fontsize=8, facecolor=PANEL2, edgecolor=BORDER,
                   labelcolor=NODE_COL, loc='lower right')
- 
+
     fig.tight_layout(pad=2)
     return fig
- 
- 
+
+
 def build_stress_dataframe(stress_rows):
     if not stress_rows: return pd.DataFrame()
     rows = []
@@ -412,32 +435,32 @@ def build_stress_dataframe(stress_rows):
         rows.append({
             "Nodo":       r["node"],
             "Caso":       stype_label,
-            "S (psi)":    round(r["sl"],    1),
-            "Sallow (psi)": round(r["sallow"],1),
+            "S (MPa)":    round(psi_to_mpa(r["sl"]),    2),
+            "Sallow (MPa)": round(psi_to_mpa(r["sallow"]),2),
             "S/Sa  (%)":  round(pct, 1),
-            "Slp (psi)":  round(r["slp"],   1),
-            "Slb (psi)":  round(r["slb"],   1),
-            "Shoop (psi)": round(r["shoop"], 1),
+            "Slp (MPa)":  round(psi_to_mpa(r["slp"]),   2),
+            "Slb (MPa)":  round(psi_to_mpa(r["slb"]),   2),
+            "Shoop (MPa)": round(psi_to_mpa(r["shoop"]), 2),
         })
     return pd.DataFrame(rows)
- 
- 
+
+
 def color_stress_row(row):
     ratio = row["S/Sa  (%)"] / 100
     if ratio < 0.5:   bg = "#3fb95022"
     elif ratio < 0.8: bg = "#fbbf2422"
     else:             bg = "#ff7b7244"
     return [f"background-color:{bg}"] * len(row)
- 
- 
+
+
 def make_figure(nodes, anchors, movements, scale, orientation):
     fig, ax = plt.subplots(figsize=(10,6))
     fig.patch.set_facecolor(BG)
     ax.set_facecolor(BG)
     nids = sorted(nodes.keys())
-    xs0  = [nodes[n][0]/12 for n in nids]
-    ys0  = [nodes[n][1]/12 for n in nids]
- 
+    xs0  = [in_to_m(nodes[n][0]) for n in nids]   # inches → meters
+    ys0  = [in_to_m(nodes[n][1]) for n in nids]
+
     ax.plot(xs0, ys0, color=PIPE_COL, linewidth=5,
             solid_capstyle='round', solid_joinstyle='round',
             zorder=3, label="Geometría original")
@@ -448,7 +471,7 @@ def make_figure(nodes, anchors, movements, scale, orientation):
                     va='center',fontfamily='monospace',zorder=6)
     for n in anchors:
         _draw_anchor(ax, nodes[n][0]/12, nodes[n][1]/12)
- 
+
     is_planta = "planta" in orientation
     for key, color, ls, lbl in [
         ("Peso",    DEFORM_W, "--",  "Deformada — Peso propio"),
@@ -467,13 +490,13 @@ def make_figure(nodes, anchors, movements, scale, orientation):
             ax.plot(x,y,'o',color=color,markersize=5,
                     markeredgecolor=BG,markeredgewidth=1,zorder=6)
         _annotate_max(ax,nids,nodes,movements,key,color,scale,orientation)
- 
+
     _draw_gravity_arrow(ax, orientation)
- 
+
     is_vert = "Vertical" in orientation
-    ax.set_xlabel("X lateral  (ft)" if is_vert else "X  (ft)",
+    ax.set_xlabel("X lateral  (m)" if is_vert else "X  (m)",
                   color=SUBTEXT,fontsize=10,fontfamily='monospace')
-    ax.set_ylabel("Y  (ft)" + ("  — Vista de planta" if is_planta else ""),
+    ax.set_ylabel("Y  (m)" + ("  — Vista de planta" if is_planta else ""),
                   color=SUBTEXT,fontsize=10,fontfamily='monospace')
     ax.set_aspect('equal','datalim'); ax.margins(0.28)
     ax.tick_params(colors=SUBTEXT,labelsize=9)
@@ -492,9 +515,9 @@ def make_figure(nodes, anchors, movements, scale, orientation):
                           edgecolor=GRAV_COL,alpha=0.85))
     fig.tight_layout()
     return fig
- 
+
 def _draw_anchor(ax,x,y):
-    s=0.22
+    s=0.065  # meters (≈0.22 ft)
     ax.add_patch(plt.Polygon([[x,y],[x-s,y-s*1.2],[x+s,y-s*1.2]],
                               color=ANCHOR_COL,zorder=7,alpha=0.85))
     ax.plot([x-s*1.3,x+s*1.3],[y-s*1.2,y-s*1.2],
@@ -503,7 +526,7 @@ def _draw_anchor(ax,x,y):
         ox=-s*1.2+i*(s*0.6)
         ax.plot([x+ox,x+ox-s*0.4],[y-s*1.2,y-s*1.7],
                 color=ANCHOR_COL,linewidth=1,alpha=0.5,zorder=7)
- 
+
 def _draw_gravity_arrow(ax, orientation):
     if "planta" in orientation:
         ax.text(0.04,0.97,"⊗  g",transform=ax.transAxes,ha='left',va='top',
@@ -516,7 +539,7 @@ def _draw_gravity_arrow(ax, orientation):
         ax.text(0.06,0.895,"g",transform=ax.transAxes,ha='left',va='center',
                 color=GRAV_COL,fontsize=11,fontweight='bold',
                 fontfamily='monospace',zorder=10)
- 
+
 def _annotate_max(ax,nids,nodes,movements,key,color,scale,orientation):
     best,best_n=0,None
     for n in nids:
@@ -529,11 +552,11 @@ def _annotate_max(ax,nids,nodes,movements,key,color,scale,orientation):
     ddx,ddy=_disp_xy(best_n,key,movements,orientation)
     ox=nodes[best_n][0]/12+ddx*scale
     oy=nodes[best_n][1]/12+ddy*scale
-    ax.annotate(f"  Δmax={real_mag:.3f}\"",(ox,oy),color=color,
+    ax.annotate(f"  Δmax={in_to_mm(real_mag):.2f} mm",(ox,oy),color=color,
                 fontsize=9,fontfamily='monospace',
                 bbox=dict(boxstyle='round,pad=0.3',facecolor=BG,
                           edgecolor=color,alpha=0.9),zorder=8)
- 
+
 def build_dataframe(nodes, movements, orientation):
     is_planta = "planta" in orientation
     rows=[]
@@ -545,17 +568,17 @@ def build_dataframe(nodes, movements, orientation):
             nota=""
             if is_planta and key=="Peso": nota="⊗ fuera del plano (-Z)"
             rows.append({"Nodo":n,"Carga":key,
-                         "DX (in)":round(dx,4),"DY (in)":round(dy,4),
-                         "DZ (in)":round(dz,4),"|D| (in)":round(mag,4),"Nota":nota})
+                         "DX (mm)":round(in_to_mm(dx),3),"DY (mm)":round(in_to_mm(dy),3),
+                         "DZ (mm)":round(in_to_mm(dz),3),"|D| (mm)":round(in_to_mm(mag),3),"Nota":nota})
     return pd.DataFrame(rows)
- 
+
 # ══════════════════════════════════════════════════════════
 # STREAMLIT APP
 # ══════════════════════════════════════════════════════════
- 
+
 st.set_page_config(page_title="PSI Simulator",page_icon="🔧",
                    layout="wide",initial_sidebar_state="expanded")
- 
+
 st.markdown("""<style>
 [data-testid="stSidebar"]{background-color:#1e2530;border-right:2px solid #3a7bd5;}
 [data-testid="stSidebar"] *{color:#f0f4ff !important;}
@@ -582,16 +605,16 @@ h2,h3{color:#1d4ed8;font-family:monospace;}
 [data-testid="stMetric"]{background-color:#f0f7ff;border:1px solid #bfdbfe;
   border-radius:8px;padding:.5rem .8rem;}
 </style>""", unsafe_allow_html=True)
- 
+
 # ── Sidebar ───────────────────────────────────────────────
 with st.sidebar:
     st.markdown("# 🔧 PSI Simulator")
     st.markdown("*Pipe Stress Infinity*")
     st.divider()
- 
+
     st.markdown("### ⚙️ Tipo de sistema")
     config = st.selectbox("Configuración",CONFIGS,index=0,label_visibility="collapsed")
- 
+
     st.markdown("### 🧭 Orientación")
     orientation = st.selectbox("Orientación",ORIENTATIONS,index=0,label_visibility="collapsed")
     if "Vertical" in orientation:
@@ -600,42 +623,49 @@ with st.sidebar:
         st.caption("⊗ Vista de planta · Gravedad perpendicular al plano")
     else:
         st.caption("→ Caño corre en X · Gravedad deflecta hacia abajo")
- 
+
     st.markdown("### 🔩 Tubería")
     c1,c2 = st.columns(2)
-    with c1: size  = st.selectbox("NPS (in)",PIPE_SIZES,index=3)
-    with c2: sched = st.selectbox("Sched.",SCHEDULES,index=2)
- 
+    with c1:
+        dn_keys  = list(DN_TO_NPS.keys())
+        dn_labels= [f"{k} — NPS {DN_TO_NPS[k]}\"" for k in dn_keys]
+        dn_idx   = st.selectbox("Diámetro (DN)",range(len(dn_keys)),
+                                format_func=lambda i: dn_labels[i], index=3)
+        dn_sel   = dn_keys[dn_idx]
+        size     = DN_TO_NPS[dn_sel]
+    with c2: sched = st.selectbox("Schedule",SCHEDULES,index=2)
+
     # ── Material ──────────────────────────────────────────
     st.markdown("### 🧪 Material")
     mat_idx = st.selectbox("Material",MAT_NAMES,index=0,label_visibility="collapsed")
     mat_row = PRESET_MATERIALS[MAT_NAMES.index(mat_idx)]
     mat_id  = mat_row[1]
     is_custom = (mat_id == "CUSTOM")
- 
+
     # Mostrar propiedades del material seleccionado (editable si es custom)
     with st.expander("⚙️ Propiedades del material", expanded=is_custom):
         if is_custom:
             st.caption("Ingresá las propiedades de tu material:")
             c3,c4 = st.columns(2)
             with c3:
-                c_E   = st.number_input("E  (ksi)",    value=29000, step=500,
-                                        help="Módulo de Young a temperatura ambiente")
-                c_alp = st.number_input("α  (×10⁻⁶/°F)", value=6.07, step=0.1, format="%.2f",
-                                        help="Coeficiente de expansión térmica")
+                c_E_gpa = st.number_input("E  (GPa)", value=193.0, step=5.0,
+                                          help="Módulo de Young a temperatura ambiente")
+                c_alp_c = st.number_input("α  (×10⁻⁶/°C)", value=10.9, step=0.2, format="%.1f",
+                                          help="Coeficiente de expansión térmica")
             with c4:
-                c_rho = st.number_input("ρ  (lb/in³)", value=0.283, step=0.001, format="%.3f",
-                                        help="Densidad del material")
-                c_nu  = st.number_input("ν  (adim.)",  value=0.30,  step=0.01, format="%.2f",
-                                        help="Relación de Poisson")
-            c_sh = st.number_input("Sh (psi) — Tensión admisible", value=15000, step=500,
-                                   help="Tensión admisible a temperatura de operación (B31.1)")
+                c_rho_si = st.number_input("ρ  (kg/m³)", value=7833, step=10,
+                                           help="Densidad del material")
+                c_nu     = st.number_input("ν  (adim.)",  value=0.30, step=0.01, format="%.2f",
+                                           help="Relación de Poisson")
+            c_sh_mpa = st.number_input("Sh (MPa) — Tensión admisible", value=103.0, step=5.0,
+                                       format="%.1f",
+                                       help="Tensión admisible a temperatura de operación (B31.1)")
             custom_mat = {
-                "rho": c_rho,
+                "rho": c_rho_si / KG_M3_PER_LB_IN3,      # kg/m³ → lb/in³
                 "nu":  c_nu,
-                "alp": c_alp * 1e-6,
-                "E":   c_E   * 1000,
-                "sh":  c_sh,
+                "alp": (c_alp_c * 1e-6) * (5/9),          # ×10⁻⁶/°C → /°F
+                "E":   c_E_gpa * 1e9 / (PSI_PER_MPA*1e6), # GPa → psi
+                "sh":  c_sh_mpa * PSI_PER_MPA,             # MPa → psi
             }
         else:
             # Solo lectura: mostrar propiedades del preset
@@ -644,79 +674,83 @@ with st.sidebar:
             st.caption(f"α = {alp*1e6:.2f} ×10⁻⁶/°F &nbsp;|&nbsp; E = {E/1e6:.1f} Mpsi")
             st.caption(f"Sh = {sh:,} psi")
             custom_mat = None
- 
-    st.markdown("### 📐 Geometría (pies)")
-    L1 = st.number_input("Longitud L1",min_value=1.0,max_value=200.0,value=10.0,step=0.5)
+
+    st.markdown("### 📐 Geometría (metros)")
+    L1 = st.number_input("Longitud L1 (m)",min_value=0.1,max_value=100.0,value=3.0,step=0.5)
     needs_L2 = config not in ("Voladizo (1 apoyo empotrado)","Simplemente apoyado (2 apoyos)")
     needs_L3 = config in ("Forma U (lazo de expansión)","Forma Z (offset)")
-    L2 = st.number_input("Longitud L2",min_value=1.0,max_value=200.0,value=8.0, step=0.5,disabled=not needs_L2)
-    L3 = st.number_input("Longitud L3",min_value=1.0,max_value=200.0,value=10.0,step=0.5,disabled=not needs_L3)
- 
+    L2 = st.number_input("Longitud L2 (m)",min_value=0.1,max_value=100.0,value=2.5,step=0.5,disabled=not needs_L2)
+    L3 = st.number_input("Longitud L3 (m)",min_value=0.1,max_value=100.0,value=3.0,step=0.5,disabled=not needs_L3)
+
     st.markdown("### 📦 Cargas")
     use_weight   = st.checkbox("Peso propio (gravedad)",value=True)
     use_pressure = st.checkbox("Presión interna",       value=False)
     use_thermal  = st.checkbox("Expansión térmica",     value=True)
     if use_pressure:
-        pressure = st.number_input("Presión (psi)",min_value=0,max_value=10000,value=250,step=25)
+        pressure_mpa = st.number_input("Presión (MPa)",min_value=0.0,max_value=70.0,
+                                       value=1.7,step=0.1,format="%.1f")
+        pressure = mpa_to_psi(pressure_mpa)
     else:
         pressure = 0
     if use_thermal:
         c5,c6 = st.columns(2)
-        with c5: T_op  = st.number_input("T op. (°F)",  value=400,step=10)
-        with c6: T_ins = st.number_input("T inst. (°F)",value=70, step=5)
+        with c5: T_op_c  = st.number_input("T operación (°C)",  value=200, step=10)
+        with c6: T_ins_c = st.number_input("T instalación (°C)", value=20,  step=5)
+        T_op  = c_to_f(T_op_c)
+        T_ins = c_to_f(T_ins_c)
     else:
-        T_op,T_ins=400,70
- 
+        T_op_c,T_ins_c,T_op,T_ins=200,20,c_to_f(200),c_to_f(20)
+
     st.markdown("### 🔍 Visualización")
     scale = st.slider("Ampliación deformada",min_value=1,max_value=500,value=50,step=5)
- 
+
     st.divider()
     run_btn = st.button("▶  ANALIZAR",use_container_width=True)
- 
+
 # ── Panel principal ───────────────────────────────────────
 st.markdown("# Pipe Stress Infinity — Simulador Visual")
 orient_short = orientation.split("—")[0].strip()
 mat_short    = mat_idx.split("—")[0].strip()
 st.markdown(
     f"**Config.:** {config} &nbsp;|&nbsp; "
-    f"**NPS {size}\" Sch.{sched}** &nbsp;|&nbsp; "
+    f"**{dn_sel}  NPS {DN_TO_NPS[dn_sel]}  Sch.{sched}** &nbsp;|&nbsp; "
     f"**Material:** {mat_short} &nbsp;|&nbsp; "
     f"**Orientación:** {orient_short}")
 st.divider()
- 
+
 if not run_btn:
     st.info("👈  Configurá los parámetros en el panel izquierdo y presioná **▶ ANALIZAR**.")
     st.stop()
 if not use_weight and not use_thermal and not use_pressure:
     st.error("Seleccioná al menos una carga."); st.stop()
- 
+
 cfg = {
     "config":      config,   "orientation": orientation,
     "size":        size,     "sched":       sched,
     "mat_id":      mat_id,   "custom_mat":  custom_mat if is_custom else None,
-    "L1_in":       L1*12,    "L2_in":       L2*12,   "L3_in":  L3*12,
+    "L1_in":       m_to_in(L1), "L2_in":    m_to_in(L2), "L3_in": m_to_in(L3),
     "use_weight":  use_weight,"use_thermal": use_thermal,"use_pressure": use_pressure,"pressure": pressure,
     "T_op":        T_op,      "T_ins":       T_ins,
     "scale":       scale,
 }
- 
+
 with st.spinner("⏳ Ejecutando análisis PSI..."):
     try:
         script,nodes,anchors = build_psi_script(cfg)
         stdout,stderr,rc     = run_psi(script)
     except Exception as e:
         st.error(f"Error: {e}"); st.stop()
- 
+
 if rc!=0 or ("TRANSLATIONS" not in stdout and "MOVEMENTS" not in stdout):
     st.error("PSI no completó el análisis.")
     with st.expander("Ver log de error",expanded=True):
         st.code(stderr[-2000:]+"\n\n--- STDOUT ---\n"+stdout,language="text")
     st.stop()
- 
+
 movements = parse_movements(stdout, use_weight, use_thermal)
 if not movements:
     st.error("No se obtuvieron desplazamientos."); st.stop()
- 
+
 # ── Métricas ─────────────────────────────────────────────
 st.markdown("### 📊 Resultados")
 is_planta = "planta" in orientation
@@ -725,20 +759,20 @@ for key,lbl,col in [("Peso","🟠 Peso propio",cols_m[0]),("Térmica","🔴 Expa
     vals=[(dx**2+dy**2+dz**2)**0.5 for nd in movements.values() if key in nd for dx,dy,dz in [nd[key]]]
     if vals:
         nota="Δ máx. (fuera del plano)" if (is_planta and key=="Peso") else "Δ máximo"
-        col.metric(lbl,f"{max(vals):.4f} \"",nota)
+        col.metric(lbl,f"{in_to_mm(max(vals)):.3f} mm",nota)
 max_all=max((dx**2+dy**2+dz**2)**0.5 for nd in movements.values() for dx,dy,dz in nd.values())
-cols_m[2].metric("🔵 Δ total máximo",f"{max_all:.4f} \"","todas las cargas")
+cols_m[2].metric("🔵 Δ total máximo",f"{in_to_mm(max_all):.3f} mm","todas las cargas")
 cols_m[3].metric("📍 Nodos",len(nodes))
 st.divider()
- 
+
 # ── Gráfico ──────────────────────────────────────────────
 st.markdown("### 🖼️ Visualización")
 fig = make_figure(nodes,anchors,movements,scale,orientation)
 st.pyplot(fig,use_container_width=True)
 plt.close(fig)
- 
+
 # ── Tabla ────────────────────────────────────────────────
-st.markdown("### 📋 Tabla de desplazamientos  (pulgadas)")
+st.markdown("### 📋 Tabla de desplazamientos  (milímetros)")
 df = build_dataframe(nodes,movements,orientation)
 def color_row(row):
     c="#f0883e22" if row["Carga"]=="Peso" else "#ff7b7222"
@@ -746,11 +780,11 @@ def color_row(row):
 fmt={"DX (in)":"{:+.4f}","DY (in)":"{:+.4f}","DZ (in)":"{:+.4f}","|D| (in)":"{:.4f}"}
 st.dataframe(df.style.apply(color_row,axis=1).format(fmt),
              use_container_width=True,hide_index=True)
- 
+
 # ── Tensiones ─────────────────────────────────────────────────────
 st.divider()
 st.markdown("### ⚡ Tensiones según B31.1")
- 
+
 stress_rows = parse_stresses(stdout)
 if stress_rows:
     # Semáforo de tensiones
@@ -761,7 +795,7 @@ if stress_rows:
         st.warning(f"⚠️ Verificar — Utilización máxima: {max_ratio*100:.1f}%")
     else:
         st.error(f"🚨 EXCEDE ADMISIBLE — Utilización máxima: {max_ratio*100:.1f}%")
- 
+
     col_s1, col_s2 = st.columns([1.2, 2])
     with col_s1:
         # Tabla de tensiones
@@ -773,7 +807,7 @@ if stress_rows:
                 "S/Sa  (%)":"{:.1f}","Slp (psi)":"{:.1f}",
                 "Slb (psi)":"{:.1f}","Shoop (psi)":"{:.1f}"}),
             use_container_width=True, hide_index=True)
-        st.caption("🟢 < 50%  🟡 50–80%  🔴 > 80%  &nbsp;|&nbsp; Sl = tensión total longitudinal · Slp = presión · Slb = flexión · Shoop = circunferencial")
+        st.caption("🟢 < 50%  🟡 50–80%  🔴 > 80%  &nbsp;|&nbsp; Sl = tensión longitudinal total · Slp = por presión · Slb = por flexión · Shoop = circunferencial")
     with col_s2:
         fig_s = make_stress_figure(stress_rows, nodes)
         if fig_s:
@@ -781,6 +815,6 @@ if stress_rows:
             plt.close(fig_s)
 else:
     st.info("Sin datos de tensión disponibles.")
- 
+
 with st.expander("📄 Ver log de PSI"):
     st.code(stdout,language="text")
