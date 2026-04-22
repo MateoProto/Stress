@@ -1,9 +1,4 @@
-# Pipe Stress Infinity Visual Simulator — Dependencias
-# Instalá con: pip install -r requirements.txt
-
+streamlit>=1.30.0
 matplotlib>=3.5.0
-psi @ git+https://github.com/denisgomes/psi.git
-
-# tkinter viene incluido con Python estándar.
-# Si usás Linux y no está instalado:
-#   sudo apt install python3-tk
+pandas>=1.5.0
+git+https://github.com/denisgomes/psi.git
