@@ -20,6 +20,7 @@ GRID_COL   = "#21262d"
 PANEL2     = "#1c2128"
 BORDER     = "#30363d"
 GRAV_COL   = "#fbbf24"
+TEXT       = "#e6edf3"
  
 # ── Datos constantes ─────────────────────────────────────
 PIPE_SIZES = ["2","3","4","6","8","10","12","16"]
@@ -101,7 +102,7 @@ from psi.model import Model
 from psi.elements import Run
 from psi.sections import Pipe
 from psi.material import Material
-from psi.loads import Weight, Thermal
+from psi.loads import Weight, Thermal, Pressure
 from psi.loadcase import LoadCase
 from psi.reports import Movements
 from psi.codes.b311 import B31167
@@ -201,18 +202,51 @@ def build_psi_script(cfg):
     loads = lcs = ""
     lc_names = []
  
-    if cfg["use_weight"]:
-        loads += f"w1=Weight('W1',1)\nw1.apply([{es}])\n"
-        lcs   += f"lc_w=LoadCase('l1','sus',[Weight],[1])\n"
+    if cfg["use_weight"] or cfg["use_pressure"]:
+        sus_types = []
+        if cfg["use_weight"]:
+            loads += f"w1=Weight('W1',1)\nw1.apply([{es}])\n"
+            sus_types.append("Weight")
+        if cfg["use_pressure"]:
+            loads += f"p1=Pressure('P1',1,{cfg['pressure']})\np1.apply([{es}])\n"
+            sus_types.append("Pressure")
+        lcs   += f"lc_w=LoadCase('l1','sus',[{','.join(sus_types)}],[{','.join(['1']*len(sus_types))}])\n"
         lc_names.append("lc_w")
     if cfg["use_thermal"]:
         loads += f"t1=Thermal('T1',1,{cfg['T_op']},{cfg['T_ins']})\nt1.apply([{es}])\n"
         lcs   += f"lc_t=LoadCase('l2','exp',[Thermal],[1])\n"
         lc_names.append("lc_t")
  
+    stress_block = """
+from psi.units import Units as _Units
+_ndof = 6
+_pts  = list(app.points)
+print("\\n=== PSI_STRESS_DATA ===")
+for _lc in [{lc_names_str}]:
+    for _el in app.elements:
+        _ii = _pts.index(_el.from_point)
+        _ij = _pts.index(_el.to_point)
+        _fi = _lc.forces.results[_ii*_ndof:_ii*_ndof+_ndof, 0]
+        _fj = _lc.forces.results[_ij*_ndof:_ij*_ndof+_ndof, 0]
+        with _Units(user_units="code_english"):
+            _slp   = _el.code.slp(_el, _lc)
+            _shoop = _el.code.shoop(_el, _lc)
+            for _pt, _forces in [(_el.from_point, _fi), (_el.to_point, _fj)]:
+                _slb = _el.code.slb(_el, _pt, _forces)
+                _sl  = _el.code.sl(_el, _lc, _pt, _forces)
+                try:
+                    _sa  = _el.code.sallow(_el, _lc, _pt, _forces)
+                    _rat = _sl/_sa if _sa else 0
+                except Exception:
+                    _sa, _rat = 0, 0
+                print(f"STRESS|{{_lc.name}}|{{_lc.stype}}|{{_pt.name}}|{{_sl:.2f}}|{{_sa:.2f}}|{{_rat:.4f}}|{{_slp:.2f}}|{{_slb:.2f}}|{{_shoop:.2f}}")
+print("=== END_STRESS_DATA ===")
+""".format(lc_names_str=", ".join(lc_names))
+ 
     footer = (f"b311=B31167('B31.1')\nb311.apply([{es}])\n"
               f"mdl.analyze()\n"
               f"disp=Movements('r1',[{','.join(lc_names)}])\ndisp.to_screen()\n")
+    footer += stress_block
  
     return header + geom + "\n" + loads + lcs + footer, nodes, anchors
  
@@ -273,6 +307,128 @@ def _disp_xy(node, key, movements, orientation):
     dx,dy,dz = movements[node][key]
     if is_planta and key=="Peso": return 0,0
     return dx/12, dy/12
+ 
+def parse_stresses(stdout):
+    """
+    Parsea tensiones del bloque PSI_STRESS_DATA.
+    Retorna lista de dicts con: lc, stype, node, sl, sallow, ratio, slp, slb, shoop
+    Deduplica nodos (un nodo puede aparecer como extremo de 2 elementos → toma el máximo).
+    """
+    rows = {}
+    in_block = False
+    for line in stdout.splitlines():
+        if "PSI_STRESS_DATA" in line:   in_block = True;  continue
+        if "END_STRESS_DATA" in line:   in_block = False; continue
+        if not in_block or not line.startswith("STRESS|"): continue
+        parts = line.split("|")
+        if len(parts) < 10: continue
+        _, lc, stype, node, sl, sa, ratio, slp, slb, shoop = parts[:10]
+        key = (lc, node)
+        row = {"lc": lc, "stype": stype, "node": int(node),
+               "sl": float(sl), "sallow": float(sa), "ratio": float(ratio),
+               "slp": float(slp), "slb": float(slb), "shoop": float(shoop)}
+        # Keep max sl at each node/lc (avoid duplicating shared nodes)
+        if key not in rows or float(sl) > rows[key]["sl"]:
+            rows[key] = row
+    return list(rows.values())
+ 
+ 
+def make_stress_figure(stress_rows, nodes):
+    """Bar chart showing S/Sallow ratio per node, colored by severity."""
+    if not stress_rows: return None
+ 
+    # Group by stype
+    sus_rows = [r for r in stress_rows if r["stype"] == "sus"]
+    exp_rows = [r for r in stress_rows if r["stype"] == "exp"]
+ 
+    n_plots = (1 if sus_rows else 0) + (1 if exp_rows else 0)
+    if n_plots == 0: return None
+ 
+    fig, axes = plt.subplots(1, n_plots, figsize=(6*n_plots, max(3, len(nodes)*0.6+1.5)))
+    if n_plots == 1: axes = [axes]
+    fig.patch.set_facecolor(BG)
+ 
+    for ax, rows, title in zip(axes,
+                                [r for r in [sus_rows, exp_rows] if r],
+                                ["Carga sostenida (Peso + Presión)",
+                                 "Expansión térmica"][:(n_plots)]):
+        rows_s = sorted(rows, key=lambda r: r["node"])
+        node_labels = [f"Nodo {r['node']}" for r in rows_s]
+        ratios      = [r["ratio"] for r in rows_s]
+        sl_vals     = [r["sl"]    for r in rows_s]
+        sa_vals     = [r["sallow"] for r in rows_s]
+ 
+        # Color by ratio
+        colors = []
+        for ratio in ratios:
+            if ratio < 0.5:   colors.append("#3fb950")   # green  — OK
+            elif ratio < 0.8: colors.append("#fbbf24")   # yellow — precaución
+            else:             colors.append("#ff7b72")   # red    — crítico
+ 
+        y_pos = range(len(rows_s))
+        bars = ax.barh(list(y_pos), ratios, color=colors,
+                       height=0.55, zorder=3, edgecolor=BG, linewidth=0.5)
+ 
+        # Limit line at 1.0
+        ax.axvline(1.0, color="#ff7b72", linewidth=1.5, linestyle="--",
+                   alpha=0.7, zorder=4, label="Límite (S/Sa = 1.0)")
+        # Limit line at 0.8
+        ax.axvline(0.8, color="#fbbf24", linewidth=1, linestyle=":",
+                   alpha=0.6, zorder=4)
+ 
+        # Labels on bars
+        for i, (bar, r, sl, sa) in enumerate(zip(bars, ratios, sl_vals, sa_vals)):
+            ax.text(min(r + 0.02, 1.05), i,
+                    f"  {r*100:.1f}%  ({sl:.0f}/{sa:.0f} psi)",
+                    va='center', color=NODE_COL, fontsize=8,
+                    fontfamily='monospace')
+ 
+        ax.set_yticks(list(y_pos))
+        ax.set_yticklabels(node_labels, color=TEXT if "TEXT" in dir() else NODE_COL,
+                           fontsize=9, fontfamily='monospace')
+        ax.set_xlim(0, max(max(ratios)*1.35 + 0.1, 1.15))
+        ax.set_xlabel("S / Sallow  (utilización)", color=SUBTEXT,
+                      fontsize=9, fontfamily='monospace')
+        ax.set_title(title, color=NODE_COL, fontsize=10,
+                     fontfamily='monospace', pad=8)
+        ax.set_facecolor(BG)
+        ax.tick_params(colors=SUBTEXT, labelsize=8)
+        for sp in ax.spines.values(): sp.set_edgecolor(BORDER)
+        ax.grid(True, axis='x', color=GRID_COL, linewidth=0.7, alpha=0.8, zorder=0)
+        ax.set_axisbelow(True)
+        ax.legend(fontsize=8, facecolor=PANEL2, edgecolor=BORDER,
+                  labelcolor=NODE_COL, loc='lower right')
+ 
+    fig.tight_layout(pad=2)
+    return fig
+ 
+ 
+def build_stress_dataframe(stress_rows):
+    if not stress_rows: return pd.DataFrame()
+    rows = []
+    for r in sorted(stress_rows, key=lambda x: (x["lc"], x["node"])):
+        stype_label = "Sostenida" if r["stype"] == "sus" else "Expansión"
+        pct = r["ratio"] * 100
+        rows.append({
+            "Nodo":       r["node"],
+            "Caso":       stype_label,
+            "S (psi)":    round(r["sl"],    1),
+            "Sallow (psi)": round(r["sallow"],1),
+            "S/Sa  (%)":  round(pct, 1),
+            "Slp (psi)":  round(r["slp"],   1),
+            "Slb (psi)":  round(r["slb"],   1),
+            "Shoop (psi)": round(r["shoop"], 1),
+        })
+    return pd.DataFrame(rows)
+ 
+ 
+def color_stress_row(row):
+    ratio = row["S/Sa  (%)"] / 100
+    if ratio < 0.5:   bg = "#3fb95022"
+    elif ratio < 0.8: bg = "#fbbf2422"
+    else:             bg = "#ff7b7244"
+    return [f"background-color:{bg}"] * len(row)
+ 
  
 def make_figure(nodes, anchors, movements, scale, orientation):
     fig, ax = plt.subplots(figsize=(10,6))
@@ -497,8 +653,13 @@ with st.sidebar:
     L3 = st.number_input("Longitud L3",min_value=1.0,max_value=200.0,value=10.0,step=0.5,disabled=not needs_L3)
  
     st.markdown("### 📦 Cargas")
-    use_weight  = st.checkbox("Peso propio (gravedad)",value=True)
-    use_thermal = st.checkbox("Expansión térmica",     value=True)
+    use_weight   = st.checkbox("Peso propio (gravedad)",value=True)
+    use_pressure = st.checkbox("Presión interna",       value=False)
+    use_thermal  = st.checkbox("Expansión térmica",     value=True)
+    if use_pressure:
+        pressure = st.number_input("Presión (psi)",min_value=0,max_value=10000,value=250,step=25)
+    else:
+        pressure = 0
     if use_thermal:
         c5,c6 = st.columns(2)
         with c5: T_op  = st.number_input("T op. (°F)",  value=400,step=10)
@@ -526,7 +687,7 @@ st.divider()
 if not run_btn:
     st.info("👈  Configurá los parámetros en el panel izquierdo y presioná **▶ ANALIZAR**.")
     st.stop()
-if not use_weight and not use_thermal:
+if not use_weight and not use_thermal and not use_pressure:
     st.error("Seleccioná al menos una carga."); st.stop()
  
 cfg = {
@@ -534,7 +695,7 @@ cfg = {
     "size":        size,     "sched":       sched,
     "mat_id":      mat_id,   "custom_mat":  custom_mat if is_custom else None,
     "L1_in":       L1*12,    "L2_in":       L2*12,   "L3_in":  L3*12,
-    "use_weight":  use_weight,"use_thermal": use_thermal,
+    "use_weight":  use_weight,"use_thermal": use_thermal,"use_pressure": use_pressure,"pressure": pressure,
     "T_op":        T_op,      "T_ins":       T_ins,
     "scale":       scale,
 }
@@ -585,6 +746,41 @@ def color_row(row):
 fmt={"DX (in)":"{:+.4f}","DY (in)":"{:+.4f}","DZ (in)":"{:+.4f}","|D| (in)":"{:.4f}"}
 st.dataframe(df.style.apply(color_row,axis=1).format(fmt),
              use_container_width=True,hide_index=True)
+ 
+# ── Tensiones ─────────────────────────────────────────────────────
+st.divider()
+st.markdown("### ⚡ Tensiones según B31.1")
+ 
+stress_rows = parse_stresses(stdout)
+if stress_rows:
+    # Semáforo de tensiones
+    max_ratio = max(r["ratio"] for r in stress_rows)
+    if max_ratio < 0.5:
+        st.success(f"✅ Sistema OK — Utilización máxima: {max_ratio*100:.1f}%  (< 50%)")
+    elif max_ratio < 1.0:
+        st.warning(f"⚠️ Verificar — Utilización máxima: {max_ratio*100:.1f}%")
+    else:
+        st.error(f"🚨 EXCEDE ADMISIBLE — Utilización máxima: {max_ratio*100:.1f}%")
+ 
+    col_s1, col_s2 = st.columns([1.2, 2])
+    with col_s1:
+        # Tabla de tensiones
+        df_s = build_stress_dataframe(stress_rows)
+        st.markdown("**Tabla de tensiones**")
+        st.dataframe(
+            df_s.style.apply(color_stress_row, axis=1).format({
+                "S (psi)":"{:.1f}","Sallow (psi)":"{:.1f}",
+                "S/Sa  (%)":"{:.1f}","Slp (psi)":"{:.1f}",
+                "Slb (psi)":"{:.1f}","Shoop (psi)":"{:.1f}"}),
+            use_container_width=True, hide_index=True)
+        st.caption("🟢 < 50%  🟡 50–80%  🔴 > 80%  &nbsp;|&nbsp; Sl = tensión total longitudinal · Slp = presión · Slb = flexión · Shoop = circunferencial")
+    with col_s2:
+        fig_s = make_stress_figure(stress_rows, nodes)
+        if fig_s:
+            st.pyplot(fig_s, use_container_width=True)
+            plt.close(fig_s)
+else:
+    st.info("Sin datos de tensión disponibles.")
  
 with st.expander("📄 Ver log de PSI"):
     st.code(stdout,language="text")
