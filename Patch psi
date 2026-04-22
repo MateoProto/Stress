@@ -1,0 +1,23 @@
+"""
+Parche de compatibilidad para PSI 0.0.1 con NumPy moderno.
+Ejecutar una vez después de instalar PSI:
+    python patch_psi.py
+"""
+import sys
+try:
+    import psi, os
+    path = os.path.join(os.path.dirname(psi.__file__), 'loads.py')
+    with open(path, 'r') as f:
+        content = f.read()
+    count = content.count('wxl, wyl, wzl = wl\n')
+    if count == 0:
+        print("✓ PSI ya está parcheado, nada que hacer.")
+        sys.exit(0)
+    fixed = content.replace('wxl, wyl, wzl = wl\n', 'wxl, wyl, wzl = wl[:, 0]\n')
+    with open(path, 'w') as f:
+        f.write(fixed)
+    print(f"✓ Parche aplicado: {count} corrección(es) en {path}")
+except ImportError:
+    print("✗ PSI no está instalado. Instalá primero con:")
+    print("  pip install git+https://github.com/denisgomes/psi.git")
+    sys.exit(1)
