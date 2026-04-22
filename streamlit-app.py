@@ -252,22 +252,58 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-[data-testid="stSidebar"] { background-color: #161b22; }
-[data-testid="stSidebar"] label { color: #e6edf3 !important; }
-.stSelectbox label, .stNumberInput label, .stCheckbox label { color: #e6edf3; }
-h1 { color: #58a6ff; font-family: 'Courier New', monospace; }
-h2, h3 { color: #3fb950; font-family: 'Courier New', monospace; }
+/* Sidebar */
+[data-testid="stSidebar"] {
+    background-color: #1e2530;
+    border-right: 2px solid #3a7bd5;
+}
+[data-testid="stSidebar"] * { color: #f0f4ff !important; }
+[data-testid="stSidebar"] .stMarkdown h3,
+[data-testid="stSidebar"] .stMarkdown h2 {
+    color: #7dd3fc !important;
+    font-size: 0.85rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-top: 1.1rem;
+    margin-bottom: 0.2rem;
+}
+[data-testid="stSidebar"] hr { border-color: #3a4a6b !important; }
+[data-testid="stSidebar"] .stSelectbox > div > div,
+[data-testid="stSidebar"] .stNumberInput input {
+    background-color: #2a3347 !important;
+    color: #f0f4ff !important;
+    border: 1px solid #4a6090 !important;
+    border-radius: 6px;
+}
+[data-testid="stSidebar"] label {
+    color: #c8d8f0 !important;
+    font-size: 0.88rem;
+    font-weight: 500;
+}
+[data-testid="stSidebar"] .stCheckbox label { color: #f0f4ff !important; }
+[data-testid="stSidebar"] .stCaption { color: #7dd3fc !important; }
+/* Main area */
+h1 { color: #1e3a8a; font-family: monospace; font-size: 1.8rem; }
+h2, h3 { color: #1d4ed8; font-family: monospace; }
 .stButton > button {
-    background-color: #58a6ff;
-    color: #0d1117;
+    background-color: #2563eb;
+    color: #ffffff;
     font-weight: bold;
-    font-family: 'Courier New', monospace;
+    font-family: monospace;
     border: none;
-    padding: 0.6rem 2rem;
+    border-radius: 8px;
+    padding: 0.7rem 2rem;
     font-size: 1rem;
     width: 100%;
+    letter-spacing: 0.05em;
 }
-.stButton > button:hover { background-color: #388bfd; color: #0d1117; }
+.stButton > button:hover { background-color: #1d4ed8; color: #ffffff; }
+[data-testid="stMetric"] {
+    background-color: #f0f7ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 8px;
+    padding: 0.5rem 0.8rem;
+}
 </style>
 """, unsafe_allow_html=True)
 
