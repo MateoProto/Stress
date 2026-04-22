@@ -2,22 +2,8 @@
 Pipe Stress Infinity — Simulador Visual (Streamlit)
 """
 
-# ── Parche automático PSI/NumPy (se aplica al arrancar) ──
+# ── Sin patch de archivo — el fix va embebido en cada script PSI ──
 import os, sys
-def _patch_psi():
-    try:
-        import psi
-        path = os.path.join(os.path.dirname(psi.__file__), 'loads.py')
-        with open(path, 'r') as f:
-            content = f.read()
-        if 'wxl, wyl, wzl = wl\n' in content:
-            fixed = content.replace('wxl, wyl, wzl = wl\n', 'wxl, wyl, wzl = wl[:, 0]\n')
-            with open(path, 'w') as f:
-                f.write(fixed)
-    except Exception:
-        pass
-_patch_psi()
-# ─────────────────────────────────────────────────────────
 
 import streamlit as st
 import matplotlib
@@ -50,6 +36,14 @@ CONFIGS    = [
 ]
 
 PSI_HEADER = """
+# ── Fix NumPy (monkey-patch en memoria, sin escribir archivos) ──
+import inspect, psi.loads as _psi_loads
+_src = inspect.getsource(_psi_loads)
+_src_fixed = _src.replace('wxl, wyl, wzl = wl\\n', 'wxl, wyl, wzl = wl[:, 0]\\n')
+exec(compile(_src_fixed, _psi_loads.__file__ or '<psi.loads>', 'exec'), _psi_loads.__dict__)
+from psi.loads import Weight, Thermal
+# ─────────────────────────────────────────────────────────────────
+
 from psi.app import App; app = App()
 from psi.model import Model
 from psi.elements import Run
