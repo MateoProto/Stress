@@ -105,11 +105,11 @@ def build_psi_script(cfg):
     return header + geom + loads + lcs + footer, nodes, anchors
 
 def run_psi(script_text):
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.inp', delete=False, dir='/tmp') as f:
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, dir='/tmp') as f:
         f.write(script_text); fname = f.name
     try:
-        r = subprocess.run(['psi', fname], capture_output=True, text=True, timeout=90)
-        return r.stdout, r.stderr
+        r = subprocess.run([sys.executable, fname], capture_output=True, text=True, timeout=90)
+        return r.stdout, r.stderr, r.returncode
     finally:
         os.unlink(fname)
 
@@ -378,15 +378,15 @@ cfg = {
 with st.spinner("⏳ Ejecutando análisis PSI..."):
     try:
         script, nodes, anchors = build_psi_script(cfg)
-        stdout, stderr = run_psi(script)
+        stdout, stderr, rc = run_psi(script)
     except Exception as e:
         st.error(f"Error al ejecutar PSI: {e}")
         st.stop()
 
-if "Analysis complete" not in stdout:
+if rc != 0 or ("TRANSLATIONS" not in stdout and "MOVEMENTS" not in stdout):
     st.error("PSI no completó el análisis.")
-    with st.expander("Ver log de error"):
-        st.code(stderr + stdout, language="text")
+    with st.expander("Ver log de error", expanded=True):
+        st.code(stderr[-2000:] + "\n\n--- STDOUT ---\n" + stdout, language="text")
     st.stop()
 
 movements = parse_movements(stdout, use_weight, use_thermal)
